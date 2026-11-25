@@ -1,10 +1,13 @@
 import { spawnSync } from "node:child_process";
 import { isAbsolute } from "node:path";
 
-export interface TmuxLocation {
-	kind: "tmux";
+export interface TmuxServer {
 	socket: string;
 	serverPid: number;
+}
+
+export interface TmuxLocation extends TmuxServer {
+	kind: "tmux";
 	sessionId: string;
 	windowId: string;
 	paneId: string;
@@ -24,10 +27,13 @@ export function isTmuxLocation(value: unknown): value is TmuxLocation {
 			&& !/[\t\r\n\0]/.test(tmux.paneTty)));
 }
 
-export function runTmux(socket: string, args: string[]) {
+export function runTmux(socket: string | undefined, args: string[]) {
+	// Name the default socket explicitly; inherited TMUX is not evidence
+	// that an invocation from outside tmux belongs to that server.
+	const endpoint = socket === undefined ? ["-L", "default"] : ["-S", socket];
 	// tmux's argv parser treats a trailing semicolon as a command separator
 	// even without a shell. Escape it before passing paths or other values.
-	return spawnSync("tmux", ["-S", socket, ...args.map((arg) => arg.endsWith(";") ? arg.slice(0, -1) + "\\;" : arg)], {
+	return spawnSync("tmux", [...endpoint, ...args.map((arg) => arg.endsWith(";") ? arg.slice(0, -1) + "\\;" : arg)], {
 		encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
 		timeout: 2_000, killSignal: "SIGKILL", maxBuffer: 256 * 1024,
 	});

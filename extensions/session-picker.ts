@@ -158,6 +158,7 @@ export default function sessionPicker(pi: ExtensionAPI): void {
 					const notice = await new TerminalSessionRouter(source, registry).open(selected, current, {
 						...options,
 						selectLaunch: (choices) => ctx.ui.select("Open the session where? (Pi instances without this extension are not tracked.)", choices),
+						selectTmuxWorkspace: (choices) => ctx.ui.select("Open a new window in which tmux session?", choices),
 					});
 					if (notice) ctx.ui.notify(notice, "info");
 				}

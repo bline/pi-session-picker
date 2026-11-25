@@ -66,7 +66,19 @@ If no registered Pi is using the selected file, the picker asks where to open it
 - **Ghostty in new tmux** — new Ghostty tab with its own tmux session.
 - **New tmux window** — new window in the current tmux session; only shown
   from inside tmux.
+- **New window in an existing tmux session…** — choose a workspace on the same
+  server (inside tmux) or the default server (directly in Ghostty). Shows each
+  session's window count and whether it's attached. Inside tmux, the submenu
+  excludes the current session; directly in Ghostty, it appears even if there's
+  only one tmux session. Escape returns to the destination menu.
 - **Ghostty without tmux** — new Ghostty tab running Pi directly.
+
+From inside tmux, your invoking client switches to the new window. From a direct
+Ghostty tab, the picker brings forward the chosen session's existing tab if it
+can verify the sole attached client, or attaches a new Ghostty tab if the session
+is detached. It refuses to guess when multiple clients are attached or the client
+cannot be verified. If you use non-default tmux sockets, invoke the picker from
+inside the appropriate server to see its workspaces.
 
 Ghostty destinations are shown only when the invoking tab can be verified.
 Ghostty support requires Linux GTK, `gdbus`, and a Ghostty build with
