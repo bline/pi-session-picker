@@ -1,10 +1,26 @@
 {
   "name": "pi-session-picker",
   "version": "0.1.0",
-  "description": "Use pi-sessions as a session picker inside Pi.",
+  "description": "Browse, manage, resume and navigate live Pi sessions across tmux workspaces and Ghostty tabs.",
   "license": "MIT",
   "type": "module",
-  "keywords": ["pi-package"],
+  "homepage": "https://github.com/bline/pi-session-picker",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bline/pi-session-picker.git"
+  },
+  "keywords": [
+    "pi-package",
+    "session-manager",
+    "tmux",
+    "ghostty",
+    "terminal"
+  ],
+  "files": [
+    "extensions",
+    "src",
+    "CHANGELOG.md"
+  ],
   "scripts": {
     "test": "node --test"
   },
