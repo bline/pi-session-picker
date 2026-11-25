@@ -13,7 +13,7 @@ import { detectTerminalLocation, trackSession } from "../src/track-session.ts";
 
 type SelectionFlag = "--select" | "--advanced-select";
 
-function requirePicker(executable: string, cwd: string, selectionFlag: SelectionFlag): void {
+function pickerFlag(executable: string, cwd: string): SelectionFlag {
 	// Older pisessions releases ignore arguments and would open the normal
 	// resume UI. Probe without terminal access before handing it the terminal.
 	const probe = spawnSync(executable, ["--help"], {
@@ -28,9 +28,11 @@ function requirePicker(executable: string, cwd: string, selectionFlag: Selection
 		throw new Error("pisessions was not found. Install it or set PI_SESSION_PICKER_BIN.");
 	}
 	const flags = new Set(probe.stdout?.match(/--[\w-]+/g));
-	if (probe.status !== 0 || !flags.has(selectionFlag) || !flags.has("--output")) {
-		throw new Error(`Could not verify picker support. Use a pisessions build with ${selectionFlag} and --output.`);
+	if (probe.status !== 0 || !flags.has("--select") || !flags.has("--output")) {
+		throw new Error("Could not verify picker support. Use a pisessions build with --select and --output.");
 	}
+	// The earlier two-flag fork offered management only via --advanced-select.
+	return flags.has("--advanced-select") ? "--advanced-select" : "--select";
 }
 
 function readSelection(outputPath: string): string | undefined {
@@ -58,9 +60,9 @@ function readSelection(outputPath: string): string | undefined {
 	return path;
 }
 
-async function pickSession(ctx: ExtensionCommandContext, executable: string, selectionFlag: SelectionFlag): Promise<string | undefined> {
+async function pickSession(ctx: ExtensionCommandContext, executable: string): Promise<string | undefined> {
 	const cwd = ctx.cwd;
-	requirePicker(executable, cwd, selectionFlag);
+	const selectionFlag = pickerFlag(executable, cwd);
 	const directory = mkdtempSync(join(tmpdir(), "pi-session-picker-"));
 	try {
 		const outputPath = join(directory, "selection.json");
@@ -109,10 +111,8 @@ export default function sessionPicker(pi: ExtensionAPI): void {
 	pi.registerCommand("sessions", {
 		description: "Browse Pi sessions; keep this session open when possible",
 		getArgumentCompletions: (prefix) => {
-			const normalized = prefix.trimStart().replace(/\s+/g, " ");
-			const choices = normalized.startsWith("advanced ")
-				? SESSION_MODES.map((mode) => `advanced ${mode}`) : [...SESSION_MODES, "advanced"];
-			const matches = choices.filter((value) => value !== normalized && value.startsWith(normalized));
+			const normalized = prefix.trimStart();
+			const matches = SESSION_MODES.filter((value) => value !== normalized && value.startsWith(normalized));
 			return matches.length ? matches.map((value) => ({ value, label: value })) : null;
 		},
 		handler: async (args, ctx) => {
@@ -121,12 +121,9 @@ export default function sessionPicker(pi: ExtensionAPI): void {
 				return;
 			}
 
-			const parts = args.trim().split(/\s+/);
-			const advanced = parts[0] === "advanced";
-			if (advanced) parts.shift();
-			const [mode = ""] = parts;
-			if (parts.length > 1 || (mode !== "" && !SESSION_MODES.includes(mode))) {
-				ctx.ui.notify("Usage: /sessions [advanced] [focus|tmux|native]", "warning");
+			const mode = args.trim();
+			if (mode !== "" && !SESSION_MODES.includes(mode)) {
+				ctx.ui.notify("Usage: /sessions [focus|tmux|native]", "warning");
 				return;
 			}
 
@@ -138,7 +135,7 @@ export default function sessionPicker(pi: ExtensionAPI): void {
 				if (mode === "tmux" && !source) throw new Error("/sessions tmux requires a verified tmux pane.");
 				if (mode === "focus" && !source) throw new Error("/sessions focus requires a verified tmux pane or Linux Ghostty tab.");
 				const executable = process.env.PI_SESSION_PICKER_BIN || "pisessions";
-				const selected = await pickSession(ctx, executable, advanced ? "--advanced-select" : "--select");
+				const selected = await pickSession(ctx, executable);
 				if (selected === undefined) return;
 				const current = ctx.sessionManager.getSessionFile();
 				if (!source) {

@@ -1,60 +1,79 @@
-# pi-session-picker
+# Pi Session Picker
 
-Open the [pi-sessions](https://github.com/psychobarge/pi-sessions) terminal
-browser from Pi with **`/sessions`**. Keep its filters, previews, and
-cross-project browsing, then return to the same Pi process.
+**Browse and switch Pi sessions without stopping the one you're in.**
+Press **Left Arrow** at an empty Pi prompt, or run **`/sessions`**, to filter
+sessions across projects and preview their conversations. Jump to an already
+running Pi in tmux or Linux Ghostty, or open a saved session alongside it.
+Without a supported terminal, you can choose to switch in place instead.
 
-## Try it
+![Pi Session Picker showing sample projects, a session list, and a conversation preview in tmux](docs/images/session-picker.png)
 
-Use Pi 1.6 or later and a `pisessions` executable that supports
-`--select --output`. The picker mode is proposed in
-[pi-sessions#8](https://github.com/psychobarge/pi-sessions/pull/8). If your
-installed version lacks picker support, this fork commit provides both the
-standard and advanced pickers in a separate Python environment:
+## Install
+
+Requires **Pi 1.6+** and the [pi-sessions](https://github.com/psychobarge/pi-sessions)
+terminal browser (`pisessions`). tmux and Ghostty are optional; Linux Ghostty
+integration also needs `gdbus` and the [support described below](#focus-across-ghostty-tabs-and-tmux).
+
+**1. Set up `pisessions`.** If `pisessions --help` lists `--select` and
+`--output`, you can use that installation. Otherwise, install this pinned fork
+in an isolated environment with Python 3.10+, `venv`, and Git. Picker support
+is proposed upstream in [pi-sessions#8](https://github.com/psychobarge/pi-sessions/pull/8).
 
 ```sh
 python3 -m venv "$HOME/.local/share/pi-session-picker/venv"
 "$HOME/.local/share/pi-session-picker/venv/bin/pip" install \
-  "git+https://github.com/bline/pi-sessions.git@2795b37dc99978d74cfc02e00ac720b9d8f24100"
+  "git+https://github.com/bline/pi-sessions.git@3d7fa46b81c677bbd7f5817235180c6cfbf9b3dc"
 export PI_SESSION_PICKER_BIN="$HOME/.local/share/pi-session-picker/venv/bin/pisessions"
 ```
 
-From this checkout, load it for one invocation:
+Put the `export` in your shell startup file if you want it to apply to future
+terminals. The extension uses `pisessions` from `PATH` when
+`PI_SESSION_PICKER_BIN` is unset. The override must be an executable path,
+not a command with arguments. The Pi package does not install Python software.
+For a custom sessions directory, set `PI_SESSIONS_ROOT`.
+
+**2. Install the Pi extension.** Once the package is published to npm, run:
 
 ```sh
-pi -e "$PWD/extensions/session-picker.ts"
+pi install npm:pi-session-picker
 ```
 
-Or install it as a Pi package:
+Or install the GitHub release once the tag is available:
 
 ```sh
-pi install git:github.com/bline/pi-session-picker
+pi install git:github.com/bline/pi-session-picker@v0.1.0
 ```
 
-Inside Pi, enter `/sessions`. Browse or filter normally, press **Enter** (or `r`)
-to select the highlighted session, or **Escape** (or `q`) to cancel. In a
-verified tmux pane or supported Ghostty tab, the picker keeps the current Pi
-open and focuses or opens the selected session elsewhere. Otherwise it offers
-to switch in place, with **Keep current session** selected by default.
+To try the extension from a checkout without installing it, run
+`pi -e "$PWD/extensions/session-picker.ts"` from the repository root.
+Restart Pi or run `/reload` in open interactive instances after installing.
 
-Use **`/sessions advanced`** to keep the `pisessions` management shortcuts,
-including Archive and Restore. The picker still returns the selection to Pi
-for the usual routing. You can combine it with a route, for example
-`/sessions advanced tmux`. This requires a `pisessions` build with
-`--advanced-select --output`, such as the pinned build above.
-Cancelling does not undo completed management actions. Live Doc stops updating
-when the picker exits and leaves the Markdown file in place.
+## Use the picker
+
+Run **`/sessions`** or press **Left Arrow** at an empty Pi prompt. Press
+**Enter** (or `r`) to select the highlighted session, or **Escape** (or `q`)
+to cancel. Escape first closes an open side panel or clears an active filter.
+In a verified tmux pane or supported Ghostty tab, Pi focuses or opens the
+selected session elsewhere. Otherwise it offers to switch in place,
+with **Keep current session** selected by default.
 
 Use **`/sessions native`** to ask for an in-place switch even in tmux or
 Ghostty. The prompt warns that switching closes the current session in this
 Pi instance without deleting saved history. Pi handles the replacement and
-any project change just as it does with `/resume`. Plain `/sessions` does not
-expose management actions.
+any project change just as it does with `/resume`.
 
-By default the extension runs `pisessions` from `PATH`. Set
-`PI_SESSION_PICKER_BIN` to an executable path to use another installation
-(no shell arguments). For a non-default sessions directory, use the
-picker's `PI_SESSIONS_ROOT` environment variable.
+### Manage sessions
+
+The picker keeps the full `pisessions` browser available, including Archive,
+Restore, Delete, Rename, Export, and Live Doc.
+
+**Before archiving, deleting, or renaming a session or project, close any
+affected Pi sessions.** `pisessions` checks file modification times, not the
+extension's active-session registry. An open but idle session can appear
+inactive after 120 seconds by default (`PI_SESSIONS_LIVE_SECONDS`). Deletion is
+permanent by default, and closing the picker does not undo management actions.
+Live Doc stops updating when the picker exits and leaves the Markdown file in
+place.
 
 ## Focus across Ghostty tabs and tmux
 
@@ -129,12 +148,10 @@ compare both PID and start identity and distinguish stale records from ones
 that cannot be verified. A verified terminal location is not required to
 register a file-backed session.
 
-**Coverage is per Pi process.** `pi install /path/to/pi-session-picker`
-without `--local` installs the extension in your personal Pi configuration.
-If no Pi is running, there is nothing to reload: new Pi processes using that
-configuration load the extension at startup. For any already-open interactive
-Pi, run `/reload` or restart it. This covers all open file-backed sessions in
-that setup as long as each process loads the extension and registers successfully.
+**Live routing only covers Pi processes that load the extension and register
+successfully.** A personal install (`pi install` without `--local`) loads the
+extension in new Pi processes using that configuration. Run `/reload` or
+restart already-open interactive instances to include them.
 
 Loading the extension with `pi -e` affects only that invocation, not other
 already-running or future Pi processes. New Pi processes launched by the picker

@@ -23,9 +23,9 @@ import { existsSync, writeFileSync } from "node:fs";
 import assert from "node:assert/strict";
 const args = process.argv.slice(2);
 if (args[0] === "--help") {
-	console.log(${JSON.stringify(options.help ?? "options: --select --advanced-select --output FILE")});
+	console.log(${JSON.stringify(options.help ?? "options: --select --output FILE")});
 } else {
-	assert.deepEqual(args.slice(0, 2), [${JSON.stringify(options.advanced ? "--advanced-select" : "--select")}, "--output"]);
+	assert.deepEqual(args.slice(0, 2), [${JSON.stringify(options.expectedFlag ?? "--select")}, "--output"]);
 	assert.equal(args.length, 3);
 	assert.equal(process.env.TEXTUAL_DISABLE_KITTY_KEY, "1");
 	assert.equal(existsSync(args[2]), false);
@@ -111,16 +111,14 @@ test("an explicit tmux request outside a verified pane never falls back to nativ
 	assert.match(run.notifications[0].message, /requires a verified tmux pane/);
 });
 
-for (const mode of ["focus", "advanced focus"]) {
-	test(`${mode} without a verified backend does not open the picker or switch natively`, async (t) => {
-		const run = fixture(t);
-		await run.open(mode);
-		assert.deepEqual(run.lifecycle, ["idle"]);
-		assert.deepEqual(run.switches, []);
-		assert.equal(existsSync(run.trace), false);
-		assert.match(run.notifications[0].message, /requires a verified tmux pane or Linux Ghostty tab/);
-	});
-}
+test("focus without a verified backend does not open the picker or switch natively", async (t) => {
+	const run = fixture(t);
+	await run.open("focus");
+	assert.deepEqual(run.lifecycle, ["idle"]);
+	assert.deepEqual(run.switches, []);
+	assert.equal(existsSync(run.trace), false);
+	assert.match(run.notifications[0].message, /requires a verified tmux pane or Linux Ghostty tab/);
+});
 
 test("an unknown mode shows usage instead of switching natively", async (t) => {
 	const run = fixture(t);
@@ -129,9 +127,9 @@ test("an unknown mode shows usage instead of switching natively", async (t) => {
 	assert.match(run.notifications[0].message, /Usage/);
 });
 
-for (const mode of ["", "native", "advanced", "advanced native"]) {
+for (const mode of ["", "native"]) {
 	test(`${mode || "default outside supported terminals"} switches only after the terminal is restored and the user opts in`, async (t) => {
-		const run = fixture(t, { choice: "Switch in place", advanced: mode.startsWith("advanced") });
+		const run = fixture(t, { choice: "Switch in place" });
 		await run.open(mode);
 		assert.deepEqual(run.lifecycle, [...expectedHandoff, "select", "switch"]);
 		assert.deepEqual(run.switches, [run.session]);
@@ -143,34 +141,50 @@ for (const mode of ["", "native", "advanced", "advanced native"]) {
 	});
 }
 
-test("advanced and its optional route can be completed without changing legacy arguments", (t) => {
+test("only terminal routes are offered as arguments", (t) => {
 	const { complete } = fixture(t);
 	const values = (prefix) => complete(prefix)?.map(({ value }) => value);
-	assert.deepEqual(values(""), ["focus", "tmux", "native", "advanced"]);
-	assert.deepEqual(values("adv"), ["advanced"]);
-	assert.deepEqual(values("advanced "), ["advanced focus", "advanced tmux", "advanced native"]);
-	assert.deepEqual(values("advanced  tm"), ["advanced tmux"]);
-	assert.equal(values("advanced tmux"), undefined);
+	assert.deepEqual(values(""), ["focus", "tmux", "native"]);
+	assert.deepEqual(values("  tm"), ["tmux"]);
+	assert.equal(values("tmux"), undefined);
+	assert.equal(values("adv"), undefined);
 });
 
-test("extra routes in advanced mode are rejected before opening the picker", async (t) => {
+test("extra arguments are rejected before opening the picker", async (t) => {
 	const run = fixture(t);
-	await run.open("advanced native tmux");
+	for (const args of ["native tmux", "advanced"]) await run.open(args);
 	assert.deepEqual(run.lifecycle, []);
-	assert.match(run.notifications[0].message, /Usage/);
+	assert.equal(existsSync(run.trace), false);
+	assert.deepEqual(run.notifications.map(({ message }) => message), [
+		"Usage: /sessions [focus|tmux|native]", "Usage: /sessions [focus|tmux|native]",
+	]);
 });
 
-for (const [mode, help, unsupported] of [
-	["advanced", "--select --output FILE", "--advanced-select"],
-	["advanced", "--advanced-select-like --output FILE", "--advanced-select"],
-	["", "--advanced-select --output FILE", "--select"],
-]) {
-	test(`${mode || "standard"} picker needs its exact flag when help advertises ${help}`, async (t) => {
+test("the old two-flag fork opens its management-enabled picker by default", async (t) => {
+	const run = fixture(t, {
+		help: "--select --advanced-select --output FILE",
+		expectedFlag: "--advanced-select",
+		selected: null,
+	});
+	await run.open();
+	assert.deepEqual(run.lifecycle, expectedHandoff);
+	assert.deepEqual(run.notifications, []);
+});
+
+test("a similarly named flag does not change the picker mode", async (t) => {
+	const run = fixture(t, { help: "--select --advanced-select-like --output FILE", selected: null });
+	await run.open();
+	assert.deepEqual(run.lifecycle, expectedHandoff);
+	assert.deepEqual(run.notifications, []);
+});
+
+for (const help of ["--select --output-dir DIR", "--advanced-select --output FILE"]) {
+	test(`picker needs the exact public flags when help advertises ${help}`, async (t) => {
 		const run = fixture(t, { help });
-		await run.open(mode);
+		await run.open();
 		assert.deepEqual(run.lifecycle, ["idle"]);
 		assert.equal(existsSync(run.trace), false);
-		assert.ok(run.notifications[0].message.includes(`with ${unsupported} and --output`));
+		assert.match(run.notifications[0].message, /with --select and --output/);
 	});
 }
 

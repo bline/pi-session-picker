@@ -19,7 +19,8 @@
   "files": [
     "extensions",
     "src",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "docs/images/session-picker.png"
   ],
   "scripts": {
     "test": "node --test"
@@ -28,6 +29,7 @@
     "@earendil-works/pi-coding-agent": "*"
   },
   "pi": {
-    "extensions": ["./extensions/session-picker.ts"]
+    "extensions": ["./extensions/session-picker.ts"],
+    "image": "https://raw.githubusercontent.com/bline/pi-session-picker/v0.1.0/docs/images/session-picker.png"
   }
 }
