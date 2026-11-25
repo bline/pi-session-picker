@@ -1,20 +1,22 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import sessionPicker from "../extensions/session-picker.ts";
 
-const expectedHandoff = ["idle", "stop", "clear", "start", "render", "done"];
+const expectedHandoff = ["idle", "drain", "stop", "clear", "start", "render", "done"];
 
 function fixture(t, options = {}) {
 	const cwd = mkdtempSync(join(tmpdir(), "picker-test-"));
 	t.after(() => rmSync(cwd, { recursive: true, force: true }));
 	const executable = join(cwd, "fake pisessions.mjs");
 	const session = join(cwd, 'a session "é".jsonl');
+	const alias = join(cwd, "alias.jsonl");
 	const trace = join(cwd, "trace.json");
-	const selected = Object.hasOwn(options, "selected") ? options.selected : JSON.stringify(session);
+	const selected = Object.hasOwn(options, "selected") ? options.selected : JSON.stringify(options.alias ? alias : session);
 	writeFileSync(session, '{"type":"session","id":"selected"}\n');
+	if (options.alias) symlinkSync(session, alias);
 	if (!options.missingPicker) {
 		writeFileSync(executable, `#!${process.execPath}
 import { existsSync, writeFileSync } from "node:fs";
@@ -25,6 +27,7 @@ if (args[0] === "--help") {
 } else {
 	assert.deepEqual(args.slice(0, 2), ["--select", "--output"]);
 	assert.equal(args.length, 3);
+	assert.equal(process.env.TEXTUAL_DISABLE_KITTY_KEY, "1");
 	assert.equal(existsSync(args[2]), false);
 	writeFileSync(${JSON.stringify(trace)}, JSON.stringify({ cwd: process.cwd(), output: args[2] }));
 	const selected = ${JSON.stringify(selected)};
@@ -43,6 +46,7 @@ if (args[0] === "--help") {
 
 	const lifecycle = [];
 	const notifications = [];
+	const prompts = [];
 	const switches = [];
 	const tui = {
 		stop: () => lifecycle.push("stop"),
@@ -51,7 +55,7 @@ if (args[0] === "--help") {
 			assert.equal(force, true);
 			lifecycle.push("render");
 		},
-		terminal: { write: () => lifecycle.push("clear") },
+		terminal: { drainInput: async () => lifecycle.push("drain"), write: () => lifecycle.push("clear") },
 	};
 	const ctx = {
 		cwd,
@@ -69,9 +73,16 @@ if (args[0] === "--help") {
 		},
 		ui: {
 			notify: (message, kind) => notifications.push({ message, kind }),
+			select: async (title, choices) => {
+				const { output } = JSON.parse(readFileSync(trace, "utf8"));
+				assert.equal(existsSync(dirname(output)), false, "handoff is cleaned up before prompting");
+				lifecycle.push("select");
+				prompts.push({ title, choices });
+				return options.choice;
+			},
 			custom: async (factory) => {
 				let result;
-				factory(tui, null, null, (value) => {
+				await factory(tui, null, null, (value) => {
 					lifecycle.push("done");
 					result = value;
 				});
@@ -85,24 +96,64 @@ if (args[0] === "--help") {
 		handler = command.handler;
 	} });
 	return {
-		cwd, lifecycle, notifications, session, switches, trace,
-		open: () => handler("", ctx),
+		cwd, lifecycle, notifications, prompts, session, switches, trace,
+		open: (args = "") => handler(args, ctx),
 	};
 }
 
-test("passes the returned path to Pi only after restoring the terminal", async (t) => {
+test("an explicit tmux request outside a verified pane never falls back to native", async (t) => {
 	const run = fixture(t);
-	await run.open();
-	assert.deepEqual(run.lifecycle, [...expectedHandoff, "switch"]);
-	assert.deepEqual(run.switches, [run.session]);
-	assert.deepEqual(run.notifications, []);
-	assert.equal(JSON.parse(readFileSync(run.trace, "utf8")).cwd, run.cwd);
+	await run.open("tmux");
+	assert.deepEqual(run.lifecycle, ["idle"]);
+	assert.deepEqual(run.switches, []);
+	assert.equal(existsSync(run.trace), false);
+	assert.match(run.notifications[0].message, /requires a verified tmux pane/);
 });
+
+test("focus without a verified backend does not open the picker or switch natively", async (t) => {
+	const run = fixture(t);
+	await run.open("focus");
+	assert.deepEqual(run.lifecycle, ["idle"]);
+	assert.deepEqual(run.switches, []);
+	assert.equal(existsSync(run.trace), false);
+	assert.match(run.notifications[0].message, /requires a verified tmux pane or Linux Ghostty tab/);
+});
+
+test("an unknown mode shows usage instead of switching natively", async (t) => {
+	const run = fixture(t);
+	await run.open("ghostty");
+	assert.deepEqual(run.lifecycle, []);
+	assert.match(run.notifications[0].message, /Usage/);
+});
+
+for (const mode of ["", "native"]) {
+	test(`${mode || "default outside supported terminals"} switches only after the terminal is restored and the user opts in`, async (t) => {
+		const run = fixture(t, { choice: "Switch in place" });
+		await run.open(mode);
+		assert.deepEqual(run.lifecycle, [...expectedHandoff, "select", "switch"]);
+		assert.deepEqual(run.switches, [run.session]);
+		assert.deepEqual(run.notifications, []);
+		assert.equal(JSON.parse(readFileSync(run.trace, "utf8")).cwd, run.cwd);
+		assert.deepEqual(run.prompts[0].choices, ["Keep current session", "Switch in place"]);
+		assert.match(run.prompts[0].title, /closes the current session.*Saved history is not deleted/);
+		assert.equal(run.prompts[0].title.includes("could be verified"), mode === "");
+	});
+}
+
+for (const choice of [undefined, "Keep current session"]) {
+	test(`${choice ?? "dismissing the warning"} does not switch`, async (t) => {
+		const run = fixture(t, { choice });
+		await run.open();
+		assert.deepEqual(run.lifecycle, [...expectedHandoff, "select"]);
+		assert.deepEqual(run.switches, []);
+	});
+}
 
 for (const [name, options] of [
 	["a cancelled picker", { selected: null }],
 	["an interrupted picker", { status: 130 }],
 	["the already-open session", { alreadyOpen: true }],
+	["an alias of the already-open session", { alreadyOpen: true, alias: true }],
 ]) {
 	test(`${name} restores the terminal without switching`, async (t) => {
 		const run = fixture(t, options);

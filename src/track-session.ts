@@ -1,11 +1,16 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { ActiveSessionRegistry, type Registration } from "./session-registry.ts";
+import { detectGhosttyLocation } from "./ghostty.ts";
+import { ActiveSessionRegistry, canonicalSessionFile, LAUNCH_TOKEN_ENV, type Registration, type TerminalLocation } from "./session-registry.ts";
 import { detectTmuxLocation } from "./tmux-location.ts";
+
+export function detectTerminalLocation(): TerminalLocation | undefined {
+	return detectTmuxLocation() ?? detectGhosttyLocation();
+}
 
 export function trackSession(
 	pi: ExtensionAPI,
 	registry = new ActiveSessionRegistry(),
-	locate = detectTmuxLocation,
+	locate = detectTerminalLocation,
 ): void {
 	let registration: Registration | undefined;
 	let working = false;
@@ -44,6 +49,8 @@ export function trackSession(
 		warned = false;
 		working = !ctx.isIdle();
 		waiting = false;
+		const launchToken = process.env[LAUNCH_TOKEN_ENV];
+		delete process.env[LAUNCH_TOKEN_ENV];
 		const sessionFile = ctx.sessionManager.getSessionFile();
 		if (!sessionFile) return; // In-memory sessions have no file to match.
 		try {
@@ -54,6 +61,9 @@ export function trackSession(
 				// A verified tmux pane is the target even inside another terminal.
 				location: ctx.mode === "tui" ? locate() : undefined,
 			});
+			// Publish first so another picker sees either the launch claim or
+			// this live record. A different file cannot clear this launch.
+			if (launchToken) registry.acknowledgeLaunch(canonicalSessionFile(sessionFile), launchToken);
 		} catch (error) {
 			report(ctx, error);
 		}

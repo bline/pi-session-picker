@@ -1,9 +1,12 @@
-import { randomUUID } from "node:crypto";
-import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
+import { isGhosttyLocation, type GhosttyLocation } from "./ghostty.ts";
 import { inspectProcess, type ProcessStatus } from "./process-identity.ts";
 import { isTmuxLocation, type TmuxLocation } from "./tmux-location.ts";
+
+export type TerminalLocation = TmuxLocation | GhosttyLocation;
 
 export type AgentState = "idle" | "working" | "waiting";
 
@@ -11,7 +14,7 @@ interface SessionDetails {
 	sessionId: string;
 	sessionFile: string;
 	state: AgentState;
-	location?: TmuxLocation;
+	location?: TerminalLocation;
 }
 
 export interface ActiveSession extends SessionDetails {
@@ -29,6 +32,14 @@ interface RegistrySnapshot {
 export interface Registration {
 	setState(state: AgentState): void;
 	close(): void;
+}
+
+export const LAUNCH_TOKEN_ENV = "PI_SESSION_PICKER_LAUNCH_TOKEN";
+
+export interface LaunchReservation {
+	readonly token: string;
+	readonly claim: string;
+	release(): void;
 }
 
 export function canonicalSessionFile(path: string): string {
@@ -52,7 +63,7 @@ function isActiveSession(data: unknown): data is ActiveSession {
 		&& typeof entry.pid === "number" && Number.isSafeInteger(entry.pid) && entry.pid > 0 && entry.pid <= 0x7fffffff
 		&& typeof entry.processStart === "string" && entry.processStart !== ""
 		&& (entry.state === "idle" || entry.state === "working" || entry.state === "waiting")
-		&& (entry.location === undefined || isTmuxLocation(entry.location));
+		&& (entry.location === undefined || isTmuxLocation(entry.location) || isGhosttyLocation(entry.location));
 }
 
 export class ActiveSessionRegistry {
@@ -77,6 +88,59 @@ export class ActiveSessionRegistry {
 		return true;
 	}
 
+	private ensureDirectory(): void {
+		if (!this.checkDirectory()) {
+			mkdirSync(this.directory, { recursive: true, mode: 0o700 });
+			this.checkDirectory();
+		}
+	}
+
+	private reservationDirectory(sessionFile: string): string {
+		const key = createHash("sha256").update(sessionFile).digest("hex");
+		return join(this.directory, `launch-${key}`);
+	}
+
+	// sessionFile is canonical. mkdir serializes launchers across processes,
+	// including on different tmux servers. A timeout alone never unlocks it.
+	reserveLaunch(sessionFile: string): LaunchReservation | undefined {
+		this.ensureDirectory();
+		const directory = this.reservationDirectory(sessionFile);
+		try {
+			mkdirSync(directory, { mode: 0o700 });
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "EEXIST") return undefined;
+			throw error;
+		}
+		const token = randomUUID();
+		const claim = join(directory, token);
+		try {
+			writeFileSync(claim, "", { mode: 0o600, flag: "wx" });
+		} catch (error) {
+			rmSync(claim, { force: true });
+			rmdirSync(directory);
+			throw error;
+		}
+		return { token, claim, release: () => this.removeClaim(sessionFile, token, "") };
+	}
+
+	acknowledgeLaunch(sessionFile: string, token: string): void {
+		this.removeClaim(sessionFile, token, ".running");
+	}
+
+	private removeClaim(sessionFile: string, token: string, suffix: "" | ".running"): void {
+		if (!/^[a-f0-9-]{36}$/.test(token)) return;
+		const directory = this.reservationDirectory(sessionFile);
+		try {
+			// Only the actor that removes this unique claim may remove the
+			// directory. A late cleanup cannot remove a newer launch's lock.
+			unlinkSync(join(directory, token + suffix));
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+			throw error;
+		}
+		rmdirSync(directory);
+	}
+
 	register(details: SessionDetails): Registration {
 		const identity = this.probe(process.pid);
 		if (identity.kind !== "running") throw new Error("Cannot verify this Pi process's start time.");
@@ -87,10 +151,7 @@ export class ActiveSessionRegistry {
 			pid: process.pid,
 			processStart: identity.started,
 		};
-		if (!this.checkDirectory()) {
-			mkdirSync(this.directory, { recursive: true, mode: 0o700 });
-			this.checkDirectory();
-		}
+		this.ensureDirectory();
 		// Unique ownership means an outgoing runtime can only remove its own
 		// record, even if another registration shares its PID or session file.
 		const token = randomUUID();

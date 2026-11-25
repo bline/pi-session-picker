@@ -5,7 +5,7 @@ export type ProcessStatus =
 	| { kind: "running"; started: string }
 	| { kind: "exited" | "unknown" };
 
-function inaccessible(pid: number): ProcessStatus {
+function inaccessible(pid: number): { kind: "exited" | "unknown" } {
 	try {
 		process.kill(pid, 0); // Check existence without sending a signal.
 	} catch (error) {
@@ -14,7 +14,15 @@ function inaccessible(pid: number): ProcessStatus {
 	return { kind: "unknown" };
 }
 
-function linuxProcess(pid: number): ProcessStatus {
+export interface LinuxProcess {
+	kind: "running";
+	started: string;
+	parentPid: number;
+	ttyDevice: string;
+}
+
+export function linuxProcess(pid: number): LinuxProcess | { kind: "exited" | "unknown" } {
+	if (process.platform !== "linux" || !validPid(pid)) return { kind: "unknown" };
 	try {
 		const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
 		// The process name is parenthesized and can itself contain spaces and ')'.
@@ -22,14 +30,21 @@ function linuxProcess(pid: number): ProcessStatus {
 		if (end < 0) return { kind: "unknown" };
 		const fields = stat.slice(end + 1).trim().split(/\s+/);
 		if (["Z", "X", "x"].includes(fields[0])) return { kind: "exited" };
+		const [, parent, , , ttyDevice] = fields;
 		const ticks = fields[19]; // Field 22 (starttime), after the PID and name.
-		if (!ticks || !/^\d+$/.test(ticks)) return { kind: "unknown" };
+		if (!/^\d+$/.test(ticks ?? "") || !/^\d+$/.test(parent ?? "") || !/^-?\d+$/.test(ttyDevice ?? "")) {
+			return { kind: "unknown" };
+		}
 		const boot = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
 		if (!boot) return { kind: "unknown" };
-		return { kind: "running", started: `linux:${boot}:${ticks}` };
+		return { kind: "running", started: `linux:${boot}:${ticks}`, parentPid: Number(parent), ttyDevice };
 	} catch {
 		return inaccessible(pid);
 	}
+}
+
+function validPid(pid: number): boolean {
+	return Number.isSafeInteger(pid) && pid > 0 && pid <= 0x7fffffff;
 }
 
 function macProcess(pid: number): ProcessStatus {
@@ -48,7 +63,7 @@ function macProcess(pid: number): ProcessStatus {
 }
 
 export function inspectProcess(pid: number): ProcessStatus {
-	if (!Number.isSafeInteger(pid) || pid <= 0 || pid > 0x7fffffff) return { kind: "unknown" };
+	if (!validPid(pid)) return { kind: "unknown" };
 	if (process.platform === "linux") return linuxProcess(pid);
 	if (process.platform === "darwin") return macProcess(pid);
 	return { kind: "unknown" };

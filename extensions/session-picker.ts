@@ -2,8 +2,14 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { trackSession } from "../src/track-session.ts";
+import { registerLeftArrow } from "../src/left-arrow.ts";
+import { ActiveSessionRegistry, canonicalSessionFile } from "../src/session-registry.ts";
+import { TerminalSessionRouter } from "../src/terminal-session.ts";
+import { detectTmuxLocation } from "../src/tmux-location.ts";
+import { openTmuxSession, TmuxBackend } from "../src/tmux-session.ts";
+import { detectTerminalLocation, trackSession } from "../src/track-session.ts";
 
 function requirePicker(executable: string, cwd: string): void {
 	// Older pisessions releases ignore arguments and would open the normal
@@ -59,7 +65,10 @@ async function pickSession(ctx: ExtensionCommandContext, executable: string): Pr
 	const directory = mkdtempSync(join(tmpdir(), "pi-session-picker-"));
 	try {
 		const outputPath = join(directory, "selection.json");
-		const child = await ctx.ui.custom<ReturnType<typeof spawnSync>>((tui, _theme, _keys, done) => {
+		const child = await ctx.ui.custom<ReturnType<typeof spawnSync>>(async (tui, _theme, _keys, done) => {
+			// Pop Pi's keyboard modes and discard pending input before the child
+			// takes over, including the release of the key that opened it.
+			await tui.terminal.drainInput(250);
 			tui.stop();
 			let result;
 			try {
@@ -67,6 +76,9 @@ async function pickSession(ctx: ExtensionCommandContext, executable: string): Pr
 				result = spawnSync(executable, ["--select", "--output", outputPath], {
 					cwd,
 					stdio: "inherit",
+					// Textual 8.2.8 can throw on late Kitty repeat/release events.
+					// The picker uses ordinary terminal keys; don't enable that parser.
+					env: { ...process.env, TEXTUAL_DISABLE_KITTY_KEY: "1" },
 				});
 			} finally {
 				tui.start();
@@ -87,30 +99,73 @@ async function pickSession(ctx: ExtensionCommandContext, executable: string): Pr
 	}
 }
 
+const SESSION_MODES = ["focus", "tmux", "native"];
+
 export default function sessionPicker(pi: ExtensionAPI): void {
-	trackSession(pi);
+	const registry = new ActiveSessionRegistry();
+	const extensionFile = fileURLToPath(import.meta.url);
+	let pickerRunning = false;
+	trackSession(pi, registry);
+	registerLeftArrow(pi, extensionFile, () => pickerRunning);
 	pi.registerCommand("sessions", {
-		description: "Browse and switch sessions with pisessions",
-		handler: async (_args, ctx) => {
+		description: "Browse Pi sessions; keep this session open when possible",
+		getArgumentCompletions: (prefix) => {
+			const modes = SESSION_MODES.filter((mode) => mode !== prefix && mode.startsWith(prefix));
+			return modes.length ? modes.map((value) => ({ value, label: value })) : null;
+		},
+		handler: async (args, ctx) => {
 			if (ctx.mode !== "tui") {
 				ctx.ui.notify("/sessions requires Pi's terminal UI.", "warning");
 				return;
 			}
 
-			let selected: string | undefined;
-			try {
-				await ctx.waitForIdle();
-				const executable = process.env.PI_SESSION_PICKER_BIN || "pisessions";
-				selected = await pickSession(ctx, executable);
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				ctx.ui.notify(`Session picker: ${message}`, "error");
+			const mode = args.trim();
+			if (mode !== "" && !SESSION_MODES.includes(mode)) {
+				ctx.ui.notify("Usage: /sessions [focus|tmux|native]", "warning");
 				return;
 			}
 
-			if (selected !== undefined && selected !== ctx.sessionManager.getSessionFile()) {
-				// Pi owns session replacement, including cwd, trust, and vetoes.
-				await ctx.switchSession(selected);
+			if (pickerRunning) return;
+			pickerRunning = true;
+			try {
+				await ctx.waitForIdle();
+				const source = mode === "native" ? undefined : mode === "tmux" ? detectTmuxLocation() : detectTerminalLocation();
+				if (mode === "tmux" && !source) throw new Error("/sessions tmux requires a verified tmux pane.");
+				if (mode === "focus" && !source) throw new Error("/sessions focus requires a verified tmux pane or Linux Ghostty tab.");
+				const executable = process.env.PI_SESSION_PICKER_BIN || "pisessions";
+				const selected = await pickSession(ctx, executable);
+				if (selected === undefined) return;
+				const current = ctx.sessionManager.getSessionFile();
+				if (!source) {
+					if (current && canonicalSessionFile(current) === canonicalSessionFile(selected)) return;
+					const replace = "Switch in place";
+					const reason = mode === "native" ? "" : "No supported tmux pane or Ghostty tab could be verified.\n";
+					const choice = await ctx.ui.select(`${reason}Switching in place closes the current session in this Pi instance. Saved history is not deleted.`,
+						["Keep current session", replace]);
+					// Pi owns session replacement, including cwd, trust, and vetoes.
+					if (choice === replace) await ctx.switchSession(selected);
+					return;
+				}
+
+				const options = { cwd: ctx.cwd, extensionFile };
+				if (mode === "tmux" && source.kind === "tmux") {
+					await openTmuxSession(selected, current, registry, new TmuxBackend(source), {
+						...options,
+						confirmLaunch: () => ctx.ui.confirm("Open a new tmux window?",
+							"No registered Pi is using this session. Pi instances without the session picker are not tracked."),
+					});
+				} else {
+					const notice = await new TerminalSessionRouter(source, registry).open(selected, current, {
+						...options,
+						selectLaunch: (choices) => ctx.ui.select("Open the session where? (Pi instances without this extension are not tracked.)", choices),
+					});
+					if (notice) ctx.ui.notify(notice, "info");
+				}
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				ctx.ui.notify(`Session picker: ${message}`, "error");
+			} finally {
+				pickerRunning = false;
 			}
 		},
 	});
