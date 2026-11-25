@@ -1,6 +1,6 @@
 # Deferred: external session-state provider for pisessions
 
-Revisit after the upstream [picker modes PR (pi-sessions#8)](https://github.com/psychobarge/pi-sessions/pull/8) lands. This is a separate, optional upstream change, not part of the picker modes PR. No provider API is committed here.
+Revisit after the upstream [picker mode PR (pi-sessions#8)](https://github.com/psychobarge/pi-sessions/pull/8) lands. This is a separate, optional upstream change. No provider API is committed here.
 
 ## Why
 
@@ -8,7 +8,7 @@ Revisit after the upstream [picker modes PR (pi-sessions#8)](https://github.com/
 
 ## Proposed boundary
 
-- **`pisessions`** owns the status display and Archive/Delete policy. Consider an optional `--state-provider EXECUTABLE`, usable in the standalone browser as well as in `--advanced-select`. Without a provider, nothing changes.
+- **`pisessions`** owns the status display and Archive/Delete policy. Consider an optional `--state-provider EXECUTABLE`, usable in both the standalone browser and picker mode (`--select`). Without a provider, nothing changes.
 - **`pi-session-picker`** owns the registry and would supply a separate adapter once the upstream interface is agreed. The adapter would translate verified registry data into a small, versioned JSON response keyed by canonical local transcript paths. It would not expose tmux or Ghostty routing details.
 
 ## Status and protection
