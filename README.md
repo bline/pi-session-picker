@@ -9,13 +9,13 @@ cross-project browsing, then return to the same Pi process.
 Use Pi 1.6 or later and a `pisessions` executable that supports
 `--select --output`. The picker mode is proposed in
 [pi-sessions#8](https://github.com/psychobarge/pi-sessions/pull/8). If your
-installed version doesn't have it, you can try the reviewed fork commit in
-a separate Python environment:
+installed version lacks picker support, this fork commit provides both the
+standard and advanced pickers in a separate Python environment:
 
 ```sh
 python3 -m venv "$HOME/.local/share/pi-session-picker/venv"
 "$HOME/.local/share/pi-session-picker/venv/bin/pip" install \
-  "git+https://github.com/bline/pi-sessions.git@5f9c89fbaa195593e70f4a9afa3bef3d3b751cfa"
+  "git+https://github.com/bline/pi-sessions.git@2795b37dc99978d74cfc02e00ac720b9d8f24100"
 export PI_SESSION_PICKER_BIN="$HOME/.local/share/pi-session-picker/venv/bin/pisessions"
 ```
 
@@ -31,17 +31,25 @@ Or install it as a Pi package:
 pi install git:github.com/bline/pi-session-picker
 ```
 
-Inside Pi, enter `/sessions`. Browse or filter normally, press `r` to
-select the highlighted session, or press `q` to cancel. In a verified tmux
-pane or supported Ghostty tab, the picker keeps the current Pi open and
-focuses or opens the selected session elsewhere. Otherwise it offers to
-switch in place, with **Keep current session** selected by default.
+Inside Pi, enter `/sessions`. Browse or filter normally, press **Enter** (or `r`)
+to select the highlighted session, or **Escape** (or `q`) to cancel. In a
+verified tmux pane or supported Ghostty tab, the picker keeps the current Pi
+open and focuses or opens the selected session elsewhere. Otherwise it offers
+to switch in place, with **Keep current session** selected by default.
+
+Use **`/sessions advanced`** to keep the `pisessions` management shortcuts,
+including Archive and Restore. The picker still returns the selection to Pi
+for the usual routing. You can combine it with a route, for example
+`/sessions advanced tmux`. This requires a `pisessions` build with
+`--advanced-select --output`, such as the pinned build above.
+Cancelling does not undo completed management actions. Live Doc stops updating
+when the picker exits and leaves the Markdown file in place.
 
 Use **`/sessions native`** to ask for an in-place switch even in tmux or
 Ghostty. The prompt warns that switching closes the current session in this
 Pi instance without deleting saved history. Pi handles the replacement and
-any project change just as it does with `/resume`. The picker itself cannot
-archive or delete a session.
+any project change just as it does with `/resume`. Plain `/sessions` does not
+expose management actions.
 
 By default the extension runs `pisessions` from `PATH`. Set
 `PI_SESSION_PICKER_BIN` to an executable path to use another installation
@@ -88,7 +96,7 @@ switch macOS Ghostty tabs or open a new Ghostty window.
 
 ## Keep both Pi instances with tmux
 
-From a tmux pane, use **`/sessions tmux`** and select with `r` as usual.
+From a tmux pane, use **`/sessions tmux`** and select with Enter or `r`.
 Selecting the session you already have open does nothing. If another registered
 Pi is using it on the same tmux server, the command brings that exact pane
 forward, even in a different tmux session. It does not stop or replace either

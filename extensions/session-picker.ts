@@ -11,7 +11,9 @@ import { detectTmuxLocation } from "../src/tmux-location.ts";
 import { openTmuxSession, TmuxBackend } from "../src/tmux-session.ts";
 import { detectTerminalLocation, trackSession } from "../src/track-session.ts";
 
-function requirePicker(executable: string, cwd: string): void {
+type SelectionFlag = "--select" | "--advanced-select";
+
+function requirePicker(executable: string, cwd: string, selectionFlag: SelectionFlag): void {
 	// Older pisessions releases ignore arguments and would open the normal
 	// resume UI. Probe without terminal access before handing it the terminal.
 	const probe = spawnSync(executable, ["--help"], {
@@ -25,12 +27,9 @@ function requirePicker(executable: string, cwd: string): void {
 	if ((probe.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
 		throw new Error("pisessions was not found. Install it or set PI_SESSION_PICKER_BIN.");
 	}
-	if (
-		probe.status !== 0 ||
-		!probe.stdout.includes("--select") ||
-		!probe.stdout.includes("--output")
-	) {
-		throw new Error("Could not verify picker support. Use a pisessions build with --select and --output.");
+	const flags = new Set(probe.stdout?.match(/--[\w-]+/g));
+	if (probe.status !== 0 || !flags.has(selectionFlag) || !flags.has("--output")) {
+		throw new Error(`Could not verify picker support. Use a pisessions build with ${selectionFlag} and --output.`);
 	}
 }
 
@@ -59,9 +58,9 @@ function readSelection(outputPath: string): string | undefined {
 	return path;
 }
 
-async function pickSession(ctx: ExtensionCommandContext, executable: string): Promise<string | undefined> {
+async function pickSession(ctx: ExtensionCommandContext, executable: string, selectionFlag: SelectionFlag): Promise<string | undefined> {
 	const cwd = ctx.cwd;
-	requirePicker(executable, cwd);
+	requirePicker(executable, cwd, selectionFlag);
 	const directory = mkdtempSync(join(tmpdir(), "pi-session-picker-"));
 	try {
 		const outputPath = join(directory, "selection.json");
@@ -73,7 +72,7 @@ async function pickSession(ctx: ExtensionCommandContext, executable: string): Pr
 			let result;
 			try {
 				tui.terminal.write("\x1b[2J\x1b[H");
-				result = spawnSync(executable, ["--select", "--output", outputPath], {
+				result = spawnSync(executable, [selectionFlag, "--output", outputPath], {
 					cwd,
 					stdio: "inherit",
 					// Textual 8.2.8 can throw on late Kitty repeat/release events.
@@ -110,8 +109,11 @@ export default function sessionPicker(pi: ExtensionAPI): void {
 	pi.registerCommand("sessions", {
 		description: "Browse Pi sessions; keep this session open when possible",
 		getArgumentCompletions: (prefix) => {
-			const modes = SESSION_MODES.filter((mode) => mode !== prefix && mode.startsWith(prefix));
-			return modes.length ? modes.map((value) => ({ value, label: value })) : null;
+			const normalized = prefix.trimStart().replace(/\s+/g, " ");
+			const choices = normalized.startsWith("advanced ")
+				? SESSION_MODES.map((mode) => `advanced ${mode}`) : [...SESSION_MODES, "advanced"];
+			const matches = choices.filter((value) => value !== normalized && value.startsWith(normalized));
+			return matches.length ? matches.map((value) => ({ value, label: value })) : null;
 		},
 		handler: async (args, ctx) => {
 			if (ctx.mode !== "tui") {
@@ -119,9 +121,12 @@ export default function sessionPicker(pi: ExtensionAPI): void {
 				return;
 			}
 
-			const mode = args.trim();
-			if (mode !== "" && !SESSION_MODES.includes(mode)) {
-				ctx.ui.notify("Usage: /sessions [focus|tmux|native]", "warning");
+			const parts = args.trim().split(/\s+/);
+			const advanced = parts[0] === "advanced";
+			if (advanced) parts.shift();
+			const [mode = ""] = parts;
+			if (parts.length > 1 || (mode !== "" && !SESSION_MODES.includes(mode))) {
+				ctx.ui.notify("Usage: /sessions [advanced] [focus|tmux|native]", "warning");
 				return;
 			}
 
@@ -133,7 +138,7 @@ export default function sessionPicker(pi: ExtensionAPI): void {
 				if (mode === "tmux" && !source) throw new Error("/sessions tmux requires a verified tmux pane.");
 				if (mode === "focus" && !source) throw new Error("/sessions focus requires a verified tmux pane or Linux Ghostty tab.");
 				const executable = process.env.PI_SESSION_PICKER_BIN || "pisessions";
-				const selected = await pickSession(ctx, executable);
+				const selected = await pickSession(ctx, executable, advanced ? "--advanced-select" : "--select");
 				if (selected === undefined) return;
 				const current = ctx.sessionManager.getSessionFile();
 				if (!source) {
