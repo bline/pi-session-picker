@@ -126,10 +126,23 @@ tmux client's own process, not the tmux pane's inherited environment. Pi
 running directly in a verified Ghostty tab records its surface and Ghostty
 process identity instead. A crashed process can leave a record behind; reads
 compare both PID and start identity and distinguish stale records from ones
-that cannot be verified. Pi instances without the extension are not tracked.
+that cannot be verified. A verified terminal location is not required to
+register a file-backed session.
 
-The registry cannot tell whether an untracked Pi already has a session open.
-Install the extension in all your Pi instances for the most complete view.
+**Coverage is per Pi process.** `pi install /path/to/pi-session-picker`
+without `--local` installs the extension in your personal Pi configuration.
+If no Pi is running, there is nothing to reload: new Pi processes using that
+configuration load the extension at startup. For any already-open interactive
+Pi, run `/reload` or restart it. This covers all open file-backed sessions in
+that setup as long as each process loads the extension and registers successfully.
+
+Loading the extension with `pi -e` affects only that invocation, not other
+already-running or future Pi processes. New Pi processes launched by the picker
+are an exception: it passes `--extension` to those launches explicitly.
+In-memory sessions (such as `--no-session`) have no file to register. A missing
+record cannot rule out a Pi started with packages or extensions disabled, one
+using a different configuration or home directory, or one that failed to register.
+
 Concurrent focus-mode and `/sessions tmux` launches of the same file
 share a reservation until the new Pi registers or the launcher exits. If the
 launcher is killed before it can clean up, the reservation can remain under
