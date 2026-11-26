@@ -1,7 +1,7 @@
 # Pi Session Picker
 
 [![CI](https://github.com/bline/pi-session-picker/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/bline/pi-session-picker/actions/workflows/ci.yml)
-[![Pi 1.6+](https://img.shields.io/badge/Pi-1.6%2B-7c3aed)](#install)
+[![Pi 1.6+](docs/images/pi-version-badge.svg)](#install)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **Browse and switch Pi sessions without stopping the one you're in.**
