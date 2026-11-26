@@ -6,7 +6,15 @@ sessions across projects and preview their conversations. Jump to an already
 running Pi in tmux or Linux Ghostty, or open a saved session alongside it.
 Without a supported terminal, you can choose to switch in place instead.
 
-![Pi Session Picker showing sample projects, a session list, and a conversation preview in tmux](docs/images/session-picker.png)
+## Demo
+
+Watch the picker switch tmux windows within **API Reliability**, then jump to
+**CI Cache** in the **Release Ops** Ghostty tab. All nine Pi sessions stay open.
+
+![Pi Session Picker previews a conversation, switches tmux windows, then jumps to another Ghostty tab](docs/demo/pi-session-picker-layered-demo.gif)
+
+[Full-resolution MP4](docs/demo/pi-session-picker-layered-demo.mp4?raw=true) ·
+[Still screenshot](docs/images/session-picker.png)
 
 ## Install
 
