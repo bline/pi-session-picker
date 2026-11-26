@@ -1,5 +1,9 @@
 # Pi Session Picker
 
+[![CI](https://github.com/bline/pi-session-picker/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/bline/pi-session-picker/actions/workflows/ci.yml)
+[![Pi 1.6+](https://img.shields.io/badge/Pi-1.6%2B-7c3aed)](#install)
+[![MIT License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 **Browse and switch Pi sessions without stopping the one you're in.**
 Press **Left Arrow** at an empty Pi prompt, or run **`/sessions`**, to filter
 sessions across projects and preview their conversations. Jump to an already
@@ -198,3 +202,5 @@ left alone.
 ## Development
 
 Run `npm test` with Node.js 22.18 or later. No npm install is necessary.
+[CI](.github/workflows/ci.yml) runs the tests (including real tmux on Linux)
+and checks the npm package contents without publishing.
