@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { ActiveSessionRegistry, canonicalSessionFile } from "../src/session-registry.ts";
 import { PANE_FORMAT, parseLivePane } from "../src/tmux-location.ts";
 import { TerminalSessionRouter } from "../src/terminal-session.ts";
@@ -21,6 +22,7 @@ test("real tmux: exact pane, launch handoff, and default focus mode", {
 	const cwd = join(dir, "source directory #{literal};");
 	const registryPath = join(dir, "registry");
 	const trace = join(dir, "child.json");
+	const shutdown = join(dir, "child-shutdown");
 	mkdirSync(bin);
 	mkdirSync(cwd);
 	const oldPath = process.env.PATH;
@@ -33,6 +35,15 @@ test("real tmux: exact pane, launch handoff, and default focus mode", {
 		assert.ifError(result.error);
 		assert.equal(result.status, 0, `${args.join(" ")}: ${result.stderr}`);
 		return result.stdout.trimEnd();
+	};
+	const waitForFixture = async (ready, description, paneId) => {
+		// The fixture's own result or cleanup is authoritative, not tmux's pane-died notification.
+		const deadline = performance.now() + 10_000;
+		do {
+			if (ready()) return;
+			await delay(50);
+		} while (performance.now() < deadline);
+		assert.fail(`Timed out waiting for ${description} in pane ${paneId}:\n${tmux("capture-pane", "-p", "-S", "-", "-t", paneId)}`);
 	};
 	let attached;
 	t.after(async () => {
@@ -65,6 +76,7 @@ const ctx = { mode: "tui", isIdle: () => true, sessionManager: {
 handlers.get("session_start")({}, ctx);
 if (tmux("wait-for", "-S", "registered") !== 0 || tmux("wait-for", "child-exit") !== 0) process.exit(2);
 handlers.get("session_shutdown")({}, ctx);
+writeFileSync(${JSON.stringify(shutdown)}, "");
 `, { mode: 0o700 });
 
 	const create = (name) => parseLivePane(socket, tmux("-f", "/dev/null", "new-session", "-d", "-P", "-F", PANE_FORMAT,
@@ -76,7 +88,6 @@ handlers.get("session_shutdown")({}, ctx);
 	assert.notEqual(target.paneId, another.paneId);
 	tmux("set-option", "-gw", "remain-on-exit", "on");
 	tmux("set-hook", "-g", "client-attached", "wait-for -S client-ready");
-	tmux("set-hook", "-g", "pane-died", "wait-for -S child-pane-exited");
 	attached = spawn("script", ["-qefc", 'exec tmux -S "$TEST_SOCKET" attach -t source', "/dev/null"], {
 		env, stdio: ["pipe", "ignore", "ignore"],
 	});
@@ -125,13 +136,14 @@ handlers.get("session_shutdown")({}, ctx);
 	assert.equal(existsSync(`${reservation.claim}.running`), false);
 	new TmuxBackend(launched).focus(source);
 	tmux("wait-for", "-S", "child-exit");
-	tmux("wait-for", "child-pane-exited");
+	await waitForFixture(() => existsSync(shutdown), "Pi shutdown", launched.paneId);
+	assert.deepEqual(registry.snapshot().active, []);
 	tmux("kill-window", "-t", `${launched.sessionId}:${launched.windowId}`);
 
 	const failed = launch("failed.jsonl");
+	const failedPane = tmux("display-message", "-p", "-t", `${source.sessionId}:=pi-session`, "#{pane_id}");
 	tmux("wait-for", "-S", "child-continue");
-	tmux("wait-for", "child-pane-exited");
-	assert.equal(existsSync(`${failed.reservation.claim}.running`), false);
+	await waitForFixture(() => !existsSync(`${failed.reservation.claim}.running`), "failed-launch reservation cleanup", failedPane);
 	assert.notEqual(registry.reserveLaunch(failed.file), undefined);
 
 	const picker = join(bin, "pisessions");
@@ -144,7 +156,7 @@ else writeFileSync(process.argv[4], ${JSON.stringify(JSON.stringify(failed.file)
 `, { mode: 0o700 });
 	writeFileSync(check, `
 import { spawnSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { renameSync, writeFileSync } from "node:fs";
 import picker from ${JSON.stringify(new URL("../extensions/session-picker.ts", import.meta.url).href)};
 process.env.PI_SESSION_PICKER_BIN = ${JSON.stringify(picker)};
 let handler;
@@ -180,7 +192,9 @@ failRouting = true;
 await handler("", ctx);
 failRouting = false;
 await handler("native", ctx);
-writeFileSync(${JSON.stringify(commandResult)}, JSON.stringify({ choices, notices, switches }));
+const output = ${JSON.stringify(commandResult)};
+writeFileSync(output + ".tmp", JSON.stringify({ choices, notices, switches }));
+renameSync(output + ".tmp", output);
 `);
 	const checkLocation = parseLivePane(socket, tmux("new-window", "-d", "-P", "-F", PANE_FORMAT, "-n", "check-command",
 		"-t", `${source.sessionId}:`, "--", process.execPath, check));
@@ -188,9 +202,7 @@ writeFileSync(${JSON.stringify(commandResult)}, JSON.stringify({ choices, notice
 	const [onlyClient] = tmuxClients(source);
 	tmux("switch-client", "-c", onlyClient.tty, "-t", location(checkLocation));
 	tmux("wait-for", "-S", "check-ready");
-	tmux("wait-for", "child-pane-exited");
-	assert.equal(tmux("display-message", "-p", "-t", checkPane, "#{pane_dead_status}"), "0",
-		tmux("capture-pane", "-p", "-S", "-", "-t", checkPane));
+	await waitForFixture(() => existsSync(commandResult), "session picker command result", checkPane);
 	const command = JSON.parse(readFileSync(commandResult, "utf8"));
 	const destinations = ["New tmux window — source", "New window in an existing tmux session…"];
 	assert.deepEqual(command.choices, [destinations, ["target · 1 window · Detached"], destinations, destinations,
